@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- Handle MUC message reflection
+
 ## [1.2.2] - 22nd of October, 2024
 
 ### Changed

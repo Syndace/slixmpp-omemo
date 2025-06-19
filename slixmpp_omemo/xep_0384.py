@@ -14,6 +14,7 @@ from omemo.session_manager import (
     BundleUploadFailed,
     DeviceListDownloadFailed,
     DeviceListUploadFailed,
+    MessageNotForUs,
     MessageSendingFailed,
     SenderNotFound,
     UnknownNamespace
@@ -38,6 +39,7 @@ from slixmpp.plugins.xep_0060 import XEP_0060  # type: ignore[attr-defined]
 from slixmpp.plugins.xep_0163 import XEP_0163
 from slixmpp.roster import RosterNode  # type: ignore[attr-defined]
 from slixmpp.stanza import Iq, Message, Presence
+from slixmpp.xmlstream import XMLStream
 
 from .base_session_manager import BaseSessionManager, TrustLevel
 
@@ -584,6 +586,10 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         self.__session_manager: Optional[SessionManager] = None
         self.__session_manager_task: Optional[asyncio.Task[SessionManager]] = None
 
+        # Mapping from stanza id to plaintext. Since a new id is generated for each outgoing stanza, the
+        # protocol version does not need to be stored in addition.
+        self.__muc_reflection_cache: Dict[str, bytes] = {}
+
     def plugin_init(self) -> None:
         xmpp: BaseXMPP = self.xmpp
 
@@ -935,7 +941,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         Twomemo encrypts the whole stanza using SCE, oldmemo encrypts only the body.
 
         Args:
-            stanza: The stanza to encrypt.
+            stanza: The stanza to encrypt. Must be associated with an XML stream that has message ids enabled.
             recipient_jids: The JID of the recipients. Can be bare (aka "userhost") JIDs but doesn't have to.
                 A single JID can be used.
             identifier: A value that is passed on to :meth:`_devices_blindly_trusted` and
@@ -947,7 +953,9 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
             Encrypted messages ready to be sent and a set of non-critical errors encountered during
             encryption. The key is the messages dictionary is the OMEMO version namespace, the value is the
             encrypted message stanza for that OMEMO protocol version. The store hint is enabled on returned
-            stanzas.
+            stanzas. Note that the ids (if any) of the original stanza are not preserved. This is to avoid
+            duplicate id usage if the input stanza is encrypted multiple times for different protocol
+            versions.
 
         Warning:
             Encrypted message stanzas for oldmemo consist of only the bare minimum: the encrypted body and the
@@ -959,22 +967,16 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         Raises:
             Exception: all exceptions raised by :meth:`SessionManager.encrypt` are forwarded as-is.
-
-        Tip:
-            In contrast to one to one messages, MUC messages are reflected to the sender. Thus, the sender
-            usually does not add messages to their local message log when sending them, but when the
-            reflection is received. This approach does not pair well with OMEMO, since for security reasons it
-            is forbidden to encrypt messages for the own device. Thus, when the reflection of an OMEMO message
-            is received, it can't be decrypted and added to the local message log as usual. To counteract
-            this, make sure the outgoing messages have some sort of id and cache the original stanza, such
-            that when the reflection is received, the plaintext can be looked up from the cache and added to
-            the local message log.
         """
 
         if isinstance(recipient_jids, JID):
             recipient_jids = { recipient_jids }
         if not recipient_jids:
             raise ValueError("At least one JID must be specified")
+
+        stream: Optional[XMLStream] = stanza.stream
+        if stream is None or not getattr(stream, "use_message_ids", False):
+            raise ValueError("Stanza not associated with a message id-enabled XML stream.")
 
         # Make sure all recipient device lists are available
         await self.refresh_device_lists(recipient_jids)
@@ -1014,21 +1016,40 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         for message in messages:
             namespace = message.namespace
 
+            plaintext = plaintexts.get(namespace, None)
             message_elt: Optional[ET.Element] = None
+
             if namespace == twomemo.twomemo.NAMESPACE:
                 message_elt = twomemo.etree.serialize_message(message)
             if namespace == oldmemo.oldmemo.NAMESPACE:
                 message_elt = oldmemo.etree.serialize_message(message)
-            if message_elt is None:
+
+            if plaintext is None or message_elt is None:
                 raise UnknownNamespace(f"OMEMO version namespace {namespace} unknown")
 
             stanza_copy = copy(stanza)
             stanza_copy.clear()
+            stanza_copy["id"] = stream.new_id()
             stanza_copy.append(message_elt)
             stanza_copy["body"] = self.fallback_message
             stanza_copy.enable("store")
 
             encrypted_messages[namespace] = stanza_copy
+
+            if stanza_copy.get_type() == "groupchat":
+                # In contrast to one to one messages, MUC messages are reflected to the sender. Thus, the
+                # sender usually does not add messages to their local message log when sending them, but when
+                # the reflection is received. This approach does not pair well with OMEMO, since for security
+                # reasons it is forbidden to encrypt messages for the own device. Thus, when the reflection of
+                # an OMEMO message is received, it can't be decrypted and added to the local message log as
+                # usual. To counteract this, the plaintext of outgoing messages sent to MUCs are cached by id,
+                # such that when the reflection is received, the plaintext can be looked up from the cache and
+                # returned as if it had just been decrypted.
+                # TODO: The way reflections are handled currently, MUC messages that are encrypted for
+                # multiple protocol versions will be reflected multiple times. Some logic is required to
+                # filter duplicates, most likely prefering the newest protocol version's reflection and
+                # discarding all others.
+                self.__muc_reflection_cache[stanza_copy["id"]] = plaintext
 
         return encrypted_messages, encryption_errors
 
@@ -1109,7 +1130,24 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         if message is None or encrypted_elt is None:
             raise ValueError(f"No supported encrypted content found in stanza: {message}")
 
-        plaintext, device_information, __ = await session_manager.decrypt(message)
+        plaintext: Optional[bytes]
+        device_information: DeviceInformation
+        try:
+            plaintext, device_information = (await session_manager.decrypt(message))[:2]
+        except MessageNotForUs:
+            # If the message is not encrypted for us, check if it's a reflected MUC message that we have
+            # cached.
+            if stanza.get_type() != "groupchat":
+                raise
+
+            cached_plaintext = self.__muc_reflection_cache.pop(stanza["id"], None)
+            if cached_plaintext is None:
+                raise
+
+            plaintext = cached_plaintext
+
+            # It's a reflected MUC message, thus the sending device is us.
+            device_information = (await session_manager.get_own_device_information())[0]
 
         if message.namespace == twomemo.twomemo.NAMESPACE:
             # Do SCE unpacking here
