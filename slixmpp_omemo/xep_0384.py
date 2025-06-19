@@ -31,7 +31,7 @@ from xmlschema import XMLSchemaValidationError
 
 from slixmpp.basexmpp import BaseXMPP
 from slixmpp.exceptions import IqError
-from slixmpp.jid import JID
+from slixmpp.jid import JID  # pylint: disable=no-name-in-module
 from slixmpp.plugins.base import BasePlugin
 from slixmpp.plugins.xep_0004 import Form  # type: ignore[attr-defined]
 from slixmpp.plugins.xep_0045 import XEP_0045  # type: ignore[attr-defined]
@@ -581,7 +581,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
     }
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[no-untyped-call]
+        super().__init__(*args, **kwargs)
 
         self.__session_manager: Optional[SessionManager] = None
         self.__session_manager_task: Optional[asyncio.Task[SessionManager]] = None
@@ -780,7 +780,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         roster: RosterNode = self.xmpp.client_roster
 
-        pep_enabled = jid in roster and roster[jid]["subscription"] == "both"
+        pep_enabled = roster.has_jid(jid) and roster[jid]["subscription"] == "both"
 
         log.debug(f"Subscription changed for {jid}; PEP enabled: {pep_enabled}")
 
@@ -904,7 +904,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
                 { twomemo.twomemo.NAMESPACE, oldmemo.oldmemo.NAMESPACE } if force_download else set()
 
             # PEP is "enabled" with mutual presence subscription and applies to all backends when enabled.
-            pep_enabled = jid in roster and roster[jid]["subscription"] == "both"
+            pep_enabled = roster.has_jid(jid) and roster[jid]["subscription"] == "both"
 
             if not pep_enabled:
                 # If PEP is not enabled, check whether manual subscription is enabled instead. Manual

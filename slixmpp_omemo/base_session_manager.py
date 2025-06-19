@@ -19,10 +19,10 @@ class TrustLevel(enum.Enum):
     Trust levels modeling Blind Trust Before Verification (BTBV) and manual trust.
     """
 
-    TRUSTED: str = "TRUSTED"
-    BLINDLY_TRUSTED: str = "BLINDLY_TRUSTED"
-    UNDECIDED: str = "UNDECIDED"
-    DISTRUSTED: str = "DISTRUSTED"
+    TRUSTED = "TRUSTED"
+    BLINDLY_TRUSTED = "BLINDLY_TRUSTED"
+    UNDECIDED = "UNDECIDED"
+    DISTRUSTED = "DISTRUSTED"
 
 
 class BaseSessionManager(SessionManager):

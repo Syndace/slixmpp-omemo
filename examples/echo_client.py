@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import asyncio
 from getpass import getpass
 import json
 import logging
@@ -9,7 +10,7 @@ from omemo.storage import Just, Maybe, Nothing, Storage
 from omemo.types import DeviceInformation, JSONType
 
 from slixmpp.clientxmpp import ClientXMPP
-from slixmpp.jid import JID
+from slixmpp.jid import JID  # pylint: disable=no-name-in-module
 from slixmpp.plugins import register_plugin  # type: ignore[attr-defined]
 from slixmpp.stanza import Message
 from slixmpp.xmlstream.handler import CoroutineCallback
@@ -268,4 +269,4 @@ if __name__ == "__main__":
 
     # Connect to the XMPP server and start processing XMPP stanzas.
     xmpp.connect()
-    xmpp.process()  # type: ignore[no-untyped-call]
+    asyncio.get_event_loop().run_forever()
