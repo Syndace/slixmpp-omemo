@@ -618,6 +618,9 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         xep_0163.remove_interest(TWOMEMO_DEVICE_LIST_NODE)
         xep_0163.remove_interest(OLDMEMO_DEVICE_LIST_NODE)
 
+        if self.__session_manager is not None:
+            asyncio.create_task(self.__session_manager.shutdown())
+
         self.__session_manager = None
         if self.__session_manager_task is not None:
             self.__session_manager_task.cancel()  # pylint: disable=no-member
