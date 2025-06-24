@@ -3,6 +3,7 @@ import asyncio
 from getpass import getpass
 import json
 import logging
+from pathlib import Path
 import sys
 from typing import Any, Dict, FrozenSet, Literal, Optional, Union
 
@@ -27,14 +28,13 @@ class StorageImpl(Storage):
     Example storage implementation that stores all data in a single JSON file.
     """
 
-    JSON_FILE = "/home/syndace/omemo-echo-client.json"
-
-    def __init__(self) -> None:
+    def __init__(self, json_file_path: Path) -> None:
         super().__init__()
 
+        self.__json_file_path = json_file_path
         self.__data: Dict[str, JSONType] = {}
         try:
-            with open(self.JSON_FILE, encoding="utf8") as f:
+            with open(self.__json_file_path, encoding="utf8") as f:
                 self.__data = json.load(f)
         except Exception:  # pylint: disable=broad-exception-caught
             pass
@@ -47,19 +47,28 @@ class StorageImpl(Storage):
 
     async def _store(self, key: str, value: JSONType) -> None:
         self.__data[key] = value
-        with open(self.JSON_FILE, "w", encoding="utf8") as f:
+        with open(self.__json_file_path, "w", encoding="utf8") as f:
             json.dump(self.__data, f)
 
     async def _delete(self, key: str) -> None:
         self.__data.pop(key, None)
-        with open(self.JSON_FILE, "w", encoding="utf8") as f:
+        with open(self.__json_file_path, "w", encoding="utf8") as f:
             json.dump(self.__data, f)
+
+
+class PluginCouldNotLoad(Exception):
+    pass
 
 
 class XEP_0384Impl(XEP_0384):  # pylint: disable=invalid-name
     """
     Example implementation of the OMEMO plugin for Slixmpp.
     """
+
+    default_config = {
+        "fallback_message": "This message is OMEMO encrypted.",
+        "json_file_path": None
+    }
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # pylint: disable=redefined-outer-name
         super().__init__(*args, **kwargs)
@@ -68,7 +77,10 @@ class XEP_0384Impl(XEP_0384):  # pylint: disable=invalid-name
         self.__storage: Storage
 
     def plugin_init(self) -> None:
-        self.__storage = StorageImpl()
+        if not self.json_file_path:
+            raise PluginCouldNotLoad("JSON file path not specified.")
+
+        self.__storage = StorageImpl(Path(self.json_file_path))
 
         super().plugin_init()
 
@@ -250,6 +262,14 @@ if __name__ == "__main__":
 
     parser.add_argument("-u", "--username", dest="username", help="account username (JID)")
     parser.add_argument("-p", "--password", dest="password", help="account password")
+    parser.add_argument(
+        "-d", "--data-path",
+        dest="json_file_path",
+        type=Path,
+        default=Path.home() / "omemo-echo-client.json",
+        help="Path of the JSON file to hold the OMEMO data for this account. Note that a data file can not be"
+             " shared between multiple accounts."
+    )
 
     args = parser.parse_args()
 
@@ -265,7 +285,11 @@ if __name__ == "__main__":
     xmpp = OmemoEchoClient(args.username, args.password)
     xmpp.register_plugin("xep_0199")  # XMPP Ping
     xmpp.register_plugin("xep_0380")  # Explicit Message Encryption
-    xmpp.register_plugin("xep_0384", module=sys.modules[__name__])  # OMEMO
+    xmpp.register_plugin(
+        "xep_0384",
+        { "json_file_path": args.json_file_path },
+        module=sys.modules[__name__]
+    )  # OMEMO
 
     # Connect to the XMPP server and start processing XMPP stanzas.
     xmpp.connect()
