@@ -3,7 +3,7 @@ import enum
 from typing import FrozenSet, Optional, Set
 from typing_extensions import assert_never
 
-from omemo.session_manager import SessionManager, TrustDecisionFailed, UnknownTrustLevel
+from omemo.session_manager import SessionManager, UnknownTrustLevel
 from omemo.types import DeviceInformation, TrustLevel as CoreTrustLevel
 
 

@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- Gracefully shutdown the SessionManager in plugin_end
+
 ### Changed
 - Handle MUC message reflection
+
+### Removed
+- Removed project.py and simplified version.py as part of the migration towards pyproject.toml
 
 ## [1.2.2] - 22nd of October, 2024
 

@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "pypy-3.10"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "pypy-3.10", "pypy-3.11"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +27,16 @@ jobs:
         run: pip install .
       - name: Install test dependencies
         run: |
-          pip install --upgrade pytest pytest-asyncio pytest-cov mypy pylint flake8 setuptools
+          pip install --upgrade .[test,lint]
 
       - name: Type-check using mypy
-        run: mypy --strict --disable-error-code str-bytes-safe --untyped-calls-exclude=slixmpp slixmpp_omemo/ setup.py examples/ tests/
+        run: mypy slixmpp_omemo/ examples/ tests/
       - name: Lint using pylint
-        run: pylint slixmpp_omemo/ setup.py examples/ tests/
+        run: pylint slixmpp_omemo/ examples/ tests/
       - name: Format-check using Flake8
-        run: flake8 slixmpp_omemo/ setup.py examples/ tests/
+        run: flake8 slixmpp_omemo/ examples/ tests/
       - name: Test using pytest
-        run: pytest --cov=slixmpp_omemo --cov-report term-missing:skip-covered
+        run: pytest
 
   build:
     name: Build source distribution and wheel
@@ -45,8 +45,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install build
+        run: pip install build
+
       - name: Build source distribution and wheel
-        run: python3 setup.py sdist bdist_wheel
+        run: python -m build --sdist --wheel
 
       - uses: actions/upload-artifact@v4
         with:

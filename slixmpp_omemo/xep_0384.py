@@ -17,7 +17,6 @@ from omemo.session_manager import (
     MessageNotForUs,
     MessageSendingFailed,
     SenderNotFound,
-    TrustDecisionFailed,
     UnknownNamespace
 )
 from omemo.storage import Storage
@@ -624,7 +623,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         self.__session_manager = None
         if self.__session_manager_task is not None:
-            self.__session_manager_task.cancel()  # pylint: disable=no-member
+            self.__session_manager_task.cancel()
             self.__session_manager_task = None
 
     def session_bind(self, jid: JID) -> None:
@@ -1158,7 +1157,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         if message.namespace == twomemo.twomemo.NAMESPACE:
             # Do SCE unpacking here
-            raise NotImplementedError(f"SCE not supported yet. Plaintext: {plaintext}")
+            raise NotImplementedError(f"SCE not supported yet. Plaintext: {plaintext!r}")
 
         if message.namespace == oldmemo.oldmemo.NAMESPACE:
             stanza = copy(stanza)

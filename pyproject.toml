@@ -1,3 +1,92 @@
 [build-system]
-requires = [ "setuptools", "wheel" ]
+requires = [ "setuptools" ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "slixmpp-omemo"
+description = "OMEMO plugin for Slixmpp"
+readme = "README.md"
+dynamic = [ "version" ]
+authors = [
+    { name = "Tim Henkes (Syndace)", email = "me@syndace.dev" }
+]
+maintainers = [ { name = "Tim Henkes (Syndace)", email = "me@syndace.dev" } ]
+license = "AGPL-3.0-only"
+license-files = [ "LICENSE" ]
+requires-python = ">= 3.9"
+dependencies = [
+    "slixmpp>=1.8.0,<2",
+    "OMEMO>=1.3.0,<2",
+    "Oldmemo[xml]>=1.2.0,<2",
+    "Twomemo[xml]>=1.2.0,<2",
+    "typing-extensions>=4.4.0"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: XMPP",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "slixmpp_omemo.version.__version__" }
+
+[tool.setuptools.packages.find]
+exclude = [ "tests" ]
+
+[project.optional-dependencies]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "sphinx-autodoc-typehints"
+]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov"
+]
+lint = [
+    "mypy",
+    "pylint",
+    "flake8",
+    "flake8-pyproject"
+]
+dev = [
+    "slixmpp-omemo[docs,test,lint]"
+]
+
+[project.urls]
+Documentation = "https://slixmpp-omemo.readthedocs.io/"
+Repository = "https://github.com/Syndace/slixmpp-omemo"
+Issues = "https://github.com/Syndace/slixmpp-omemo/issues"
+Changelog = "https://github.com/Syndace/slixmpp-omemo/blob/main/CHANGELOG.md"
+
+[tool.mypy]
+strict = true
+untyped_calls_exclude = ["slixmpp"]
+
+[tool.flake8]
+max-line-length = 110
+doctests = true
+ignore = [ "E201", "E202", "W503" ]
+per-file-ignores = [
+    "slixmpp_omemo/__init__.py:F401"
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov=slixmpp_omemo --cov-report term-missing:skip-covered"
