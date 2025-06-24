@@ -37,8 +37,15 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints"
 ]
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "slixmpp": ("https://slixmpp.readthedocs.io/en/latest/", None),
+    "omemo": ("https://py-omemo.readthedocs.io/en/latest/", None)
+}
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = [ "_templates" ]
@@ -61,27 +68,34 @@ html_static_path = [ "_static" ]
 
 # -- Autodoc Configuration ---------------------------------------------------------------
 
-# The following two options seem to be ignored...
+# There are a bunch of nitpick warnings related to inherited docstrings
+#nitpicky = True
+
 autodoc_typehints = "description"
-autodoc_type_aliases = { type_alias: f"{type_alias}" for type_alias in {
+autodoc_type_aliases = { k: k for k in {
     
 } }
+
+# https://github.com/sphinx-doc/sphinx/issues/10785
+def resolve_type_aliases(app, env, node, contnode):
+    """Resolve :class: references to our type aliases as :attr: instead."""
+    if (
+        node["refdomain"] == "py"
+        and node["reftype"] == "class"
+        and node["reftarget"] in autodoc_type_aliases
+    ):
+        return app.env.get_domain("py").resolve_xref(
+            env, node["refdoc"], app.builder, "attr", node["reftarget"], node, contnode
+        )
 
 def autodoc_skip_member_handler(app, what, name, obj, skip, options):
     # Skip private members, i.e. those that start with double underscores but do not end in underscores
     if name.startswith("__") and not name.endswith("_"):
         return True
 
-    # Could be achieved using exclude-members, but this is more comfy
-    if name in {
-        "__abstractmethods__",
-        "__annotations__",
-        "__dict__",
-        "__module__",
-        "__new__",
-        "__weakref__",
-        "_abc_impl"
-    }: return True
+    # Other fixed names to always skip
+    if name in { "_abc_impl" }:
+        return True
 
     # Skip __init__s without documentation. Those are just used for type hints.
     if name == "__init__" and obj.__doc__ is None:
@@ -91,3 +105,4 @@ def autodoc_skip_member_handler(app, what, name, obj, skip, options):
 
 def setup(app):
     app.connect("autodoc-skip-member", autodoc_skip_member_handler)
+    app.connect("missing-reference", resolve_type_aliases)

@@ -17,6 +17,7 @@ from omemo.session_manager import (
     MessageNotForUs,
     MessageSendingFailed,
     SenderNotFound,
+    TrustDecisionFailed,
     UnknownNamespace
 )
 from omemo.storage import Storage
@@ -674,7 +675,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
     ) -> None:
         """
         Prompt manual trust decision on a set of undecided identity keys. The trust decisions are expected to
-        be persisted by calling :meth:`SessionManager.set_trust`.
+        be persisted by calling :meth:`~omemo.session_manager.SessionManager.set_trust`.
 
         Args:
             manually_trusted: A set of devices whose trust has to be manually decided by the user.
@@ -690,9 +691,10 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         Note:
             This is called when the encryption needs to know whether it is allowed to encrypt for these
             devices or not. When this method returns, all previously undecided trust levels should have been
-            replaced by calling :meth:`set_trust` with a different trust level. If they are not replaced or
-            still evaluate to the undecided trust level after the call, the encryption will fail with an
-            exception. See :meth:`encrypt` for details.
+            replaced by calling :meth:`~omemo.session_manager.SessionManager.set_trust` with a different trust
+            level. If they are not replaced or still evaluate to the undecided trust level after the call, the
+            encryption will fail with an exception. See :meth:`~omemo.session_manager.SessionManager.encrypt`
+            for details.
         """
 
     async def get_session_manager(self) -> SessionManager:
@@ -887,8 +889,8 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
                 keep the cached device lists up-to-date.
 
         Raises:
-            Exception: all exceptions raised by :meth:`SessionManager.refresh_device_lists` are forwarded
-                as-is.
+            Exception: all exceptions raised by
+                :meth:`~omemo.session_manager.SessionManager.refresh_device_lists` are forwarded as-is.
         """
 
         session_manager = await self.get_session_manager()
@@ -969,7 +971,8 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
             Messages without a body are not considered for oldmemo encryption.
 
         Raises:
-            Exception: all exceptions raised by :meth:`SessionManager.encrypt` are forwarded as-is.
+            Exception: all exceptions raised by :meth:`~omemo.session_manager.SessionManager.encrypt` are
+                forwarded as-is.
         """
 
         if isinstance(recipient_jids, JID):
@@ -1075,7 +1078,8 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
                 specification.
             SenderNotFound: in case the public information about the sending device could not be found or is
                 incomplete.
-            Exception: all exceptions raised by :meth:`SessionManager.decrypt` are forwarded as-is.
+            Exception: all exceptions raised by :meth:`~omemo.session_manager.SessionManager.decrypt` are
+                forwarded as-is.
         """
 
         xmpp: BaseXMPP = self.xmpp

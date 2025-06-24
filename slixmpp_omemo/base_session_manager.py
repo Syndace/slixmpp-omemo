@@ -3,7 +3,7 @@ import enum
 from typing import FrozenSet, Optional, Set
 from typing_extensions import assert_never
 
-from omemo.session_manager import SessionManager, UnknownTrustLevel
+from omemo.session_manager import SessionManager, TrustDecisionFailed, UnknownTrustLevel
 from omemo.types import DeviceInformation, TrustLevel as CoreTrustLevel
 
 
@@ -27,7 +27,8 @@ class TrustLevel(enum.Enum):
 
 class BaseSessionManager(SessionManager):
     """
-    Partial :class:`omemo.SessionManager` implementation with BTBV and manual trust as its trust systems.
+    Partial :class:`~omemo.session_manager.SessionManager` implementation with BTBV and manual trust as its
+    trust systems.
     """
 
     async def _evaluate_custom_trust_level(self, device: DeviceInformation) -> CoreTrustLevel:
@@ -141,7 +142,7 @@ class BaseSessionManager(SessionManager):
     ) -> None:
         """
         Prompt manual trust decision on a set of undecided identity keys. The trust decisions are expected to
-        be persisted by calling :meth:`set_trust`.
+        be persisted by calling :meth:`~omemo.session_manager.SessionManager.set_trust`.
 
         Args:
             manually_trusted: A set of devices whose trust has to be manually decided by the user.
@@ -154,7 +155,8 @@ class BaseSessionManager(SessionManager):
         Note:
             This is called when the encryption needs to know whether it is allowed to encrypt for these
             devices or not. When this method returns, all previously undecided trust levels should have been
-            replaced by calling :meth:`set_trust` with a different trust level. If they are not replaced or
-            still evaluate to the undecided trust level after the call, the encryption will fail with an
-            exception. See :meth:`encrypt` for details.
+            replaced by calling :meth:`~omemo.session_manager.SessionManager.set_trust` with a different trust
+            level. If they are not replaced or still evaluate to the undecided trust level after the call, the
+            encryption will fail with an exception. See :meth:`~omemo.session_manager.SessionManager.encrypt`
+            for details.
         """
