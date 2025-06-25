@@ -16,9 +16,9 @@ license-files = [ "LICENSE" ]
 requires-python = ">= 3.9"
 dependencies = [
     "slixmpp>=1.8.0,<2",
-    "OMEMO>=1.3.0,<2",
-    "Oldmemo[xml]>=1.2.0,<2",
-    "Twomemo[xml]>=1.2.0,<2",
+    "OMEMO>=2.0.0,<3",
+    "Oldmemo[xml]>=2.0.0,<3",
+    "Twomemo[xml]>=2.0.0,<3",
     "typing-extensions>=4.4.0"
 ]
 classifiers = [

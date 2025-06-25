@@ -20,7 +20,7 @@ from omemo.session_manager import (
     UnknownNamespace
 )
 from omemo.storage import Storage
-from omemo.types import DeviceInformation
+from omemo.types import DeviceInformation, DeviceList
 
 import oldmemo
 import oldmemo.etree
@@ -310,7 +310,7 @@ def _make_session_manager(xmpp: BaseXMPP, xep_0384: "XEP_0384") -> Type[SessionM
             raise UnknownNamespace(f"Unknown namespace: {namespace}")
 
         @staticmethod
-        async def _upload_device_list(namespace: str, device_list: Dict[int, Optional[str]]) -> None:
+        async def _upload_device_list(namespace: str, device_list: DeviceList) -> None:
             item: Optional[ET.Element] = None
             node: Optional[str] = None
 
@@ -358,7 +358,7 @@ def _make_session_manager(xmpp: BaseXMPP, xep_0384: "XEP_0384") -> Type[SessionM
                     ) from e
 
         @staticmethod
-        async def _download_device_list(namespace: str, bare_jid: str) -> Dict[int, Optional[str]]:
+        async def _download_device_list(namespace: str, bare_jid: str) -> DeviceList:
             node: Optional[str] = None
 
             if namespace == twomemo.twomemo.NAMESPACE:
@@ -743,7 +743,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         item = items["item"].xml
 
-        device_list: Dict[int, Optional[str]] = {}
+        device_list: DeviceList = {}
         namespace: Optional[str] = None
 
         twomemo_device_list_elt = item.find(f"{{{twomemo.twomemo.NAMESPACE}}}devices")

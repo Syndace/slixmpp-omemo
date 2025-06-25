@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - Handle MUC message reflection
 - Make the storage path configurable in the example and add a warning not to share the data between accounts
+- Updated to python-omemo v2.0.0
 
 ### Removed
 - Removed project.py and simplified version.py as part of the migration towards pyproject.toml
