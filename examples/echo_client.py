@@ -129,7 +129,7 @@ register_plugin(XEP_0384Impl)
 
 class OmemoEchoClient(ClientXMPP):
     """
-    A simple Slixmpp bot that will echo encrypted messages it receives, along with a short thank you message.
+    A simple Slixmpp bot that will echo encrypted messages it receives.
 
     For details on how to build a client with Slixmpp, look at examples in the Slixmpp repository.
     """
