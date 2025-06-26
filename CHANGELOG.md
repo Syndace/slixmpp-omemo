@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 - Gracefully shutdown the SessionManager in plugin_end
+- Add MUC support to the example echo client
 
 ### Changed
 - Handle MUC message reflection
