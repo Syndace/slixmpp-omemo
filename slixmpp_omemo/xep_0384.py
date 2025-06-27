@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 import asyncio
 from copy import copy
 import logging
-from typing import Any, Dict, FrozenSet, Optional, Set, Tuple, Type, Union
+from typing import cast, Any, Awaitable, Dict, FrozenSet, Optional, Set, Tuple, Type, Union
 from xml.etree import ElementTree as ET
 
 import omemo
@@ -24,6 +24,7 @@ from omemo.types import DeviceInformation, DeviceList
 
 import oldmemo
 import oldmemo.etree
+from oldmemo.migrations import LegacyStorage
 import twomemo
 import twomemo.etree
 
@@ -119,6 +120,75 @@ async def _publish_item_and_configure_node(
 
         # Attempt to publish the item again. This time, precondition-not-met should not fire.
         await xep_0060.publish(JID(service), node, item_id, item, publish_options_form)
+
+
+async def _download_bundle(
+    xep_0060: XEP_0060,
+    namespace: str,
+    bare_jid: str,
+    device_id: int
+) -> omemo.Bundle:
+    """
+    Implementation of :meth:`~omemo.session_manager.SessionManager._download_bundle`, extracted as standalone
+    to make it usable for :func:`~oldmemo.migrations.migrate`. For details, check the docs of
+    `_download_bundle`.
+    """
+
+    items_iq: Optional[Iq] = None
+    try:
+        if namespace == twomemo.twomemo.NAMESPACE:
+            node = "urn:xmpp:omemo:2:bundles"
+            items_iq = await xep_0060.get_items(JID(bare_jid), node, item_ids=[ str(device_id) ])
+        if namespace == oldmemo.oldmemo.NAMESPACE:
+            node = f"eu.siacs.conversations.axolotl.bundles:{device_id}"
+            items_iq = await xep_0060.get_items(JID(bare_jid), node, max_items=1)
+    except Exception as e:
+        if isinstance(e, IqError):
+            if e.condition == "item-not-found":
+                raise BundleNotFound(
+                    f"Bundle of {bare_jid}: {device_id} not found under namespace {namespace}. The"
+                    f" node doesn't exist."
+                ) from e
+
+        raise BundleDownloadFailed(
+            f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}"
+        ) from e
+
+    if items_iq is None:
+        raise UnknownNamespace(f"Unknown namespace: {namespace}")
+
+    items = items_iq["pubsub"]["items"]
+
+    if len(items) == 0:
+        raise BundleNotFound(
+            f"Bundle of {bare_jid}: {device_id} not found under namespace {namespace}. The node"
+            f" exists but is empty."
+        )
+
+    if len(items) > 1:
+        raise BundleDownloadFailed(
+            f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}:"
+            f" Unexpected number of items retrieved: {len(items)}."
+        )
+
+    bundle_elt = next(iter(items["item"].xml), None)
+    if bundle_elt is None:
+        raise BundleDownloadFailed(
+            f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}: Pubsub"
+            f" item is empty."
+        )
+
+    try:
+        if namespace == twomemo.twomemo.NAMESPACE:
+            return twomemo.etree.parse_bundle(bundle_elt, bare_jid, device_id)
+        if namespace == oldmemo.oldmemo.NAMESPACE:
+            return oldmemo.etree.parse_bundle(bundle_elt, bare_jid, device_id)
+    except Exception as e:
+        raise BundleDownloadFailed(
+            f"Bundle parsing failed for {bare_jid}: {device_id} under namespace {namespace}"
+        ) from e
+
+    raise UnknownNamespace(f"Unknown namespace: {namespace}")
 
 
 def _make_session_manager(xmpp: BaseXMPP, xep_0384: "XEP_0384") -> Type[SessionManager]:
@@ -217,61 +287,7 @@ def _make_session_manager(xmpp: BaseXMPP, xep_0384: "XEP_0384") -> Type[SessionM
 
         @staticmethod
         async def _download_bundle(namespace: str, bare_jid: str, device_id: int) -> omemo.Bundle:
-            items_iq: Optional[Iq] = None
-            try:
-                if namespace == twomemo.twomemo.NAMESPACE:
-                    node = "urn:xmpp:omemo:2:bundles"
-                    items_iq = await xep_0060.get_items(JID(bare_jid), node, item_ids=[ str(device_id) ])
-                if namespace == oldmemo.oldmemo.NAMESPACE:
-                    node = f"eu.siacs.conversations.axolotl.bundles:{device_id}"
-                    items_iq = await xep_0060.get_items(JID(bare_jid), node, max_items=1)
-            except Exception as e:
-                if isinstance(e, IqError):
-                    if e.condition == "item-not-found":
-                        raise BundleNotFound(
-                            f"Bundle of {bare_jid}: {device_id} not found under namespace {namespace}. The"
-                            f" node doesn't exist."
-                        ) from e
-
-                raise BundleDownloadFailed(
-                    f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}"
-                ) from e
-
-            if items_iq is None:
-                raise UnknownNamespace(f"Unknown namespace: {namespace}")
-
-            items = items_iq["pubsub"]["items"]
-
-            if len(items) == 0:
-                raise BundleNotFound(
-                    f"Bundle of {bare_jid}: {device_id} not found under namespace {namespace}. The node"
-                    f" exists but is empty."
-                )
-
-            if len(items) > 1:
-                raise BundleDownloadFailed(
-                    f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}:"
-                    f" Unexpected number of items retrieved: {len(items)}."
-                )
-
-            bundle_elt = next(iter(items["item"].xml), None)
-            if bundle_elt is None:
-                raise BundleDownloadFailed(
-                    f"Bundle download failed for {bare_jid}: {device_id} under namespace {namespace}: Pubsub"
-                    f" item is empty."
-                )
-
-            try:
-                if namespace == twomemo.twomemo.NAMESPACE:
-                    return twomemo.etree.parse_bundle(bundle_elt, bare_jid, device_id)
-                if namespace == oldmemo.oldmemo.NAMESPACE:
-                    return oldmemo.etree.parse_bundle(bundle_elt, bare_jid, device_id)
-            except Exception as e:
-                raise BundleDownloadFailed(
-                    f"Bundle parsing failed for {bare_jid}: {device_id} under namespace {namespace}"
-                ) from e
-
-            raise UnknownNamespace(f"Unknown namespace: {namespace}")
+            return await _download_bundle(xep_0060, namespace, bare_jid, device_id)
 
         @staticmethod
         async def _delete_bundle(namespace: str, device_id: int) -> None:
@@ -481,6 +497,7 @@ async def _prepare(
     xmpp: BaseXMPP,
     xep_0384: "XEP_0384",
     storage: Storage,
+    legacy_storage: Optional[LegacyStorage],
     signed_pre_key_rotation_period: int = 7 * 24 * 60 * 60,
     pre_key_refill_threshold: int = 99,
     max_num_per_session_skipped_keys: int = 1000,
@@ -493,6 +510,7 @@ async def _prepare(
         xmpp: The BaseXMPP object for interaction with Slixmpp/XMPP.
         xep_0384: The plugin instance.
         storage: The storage for all OMEMO-related data.
+        legacy_storage: Optional legacy storage to migrate data from.
         signed_pre_key_rotation_period: The rotation period for the signed pre key, in seconds. The rotation
             period is recommended to be between one week (the default) and one month.
         pre_key_refill_threshold: The number of pre keys that triggers a refill to 100. Defaults to 99, which
@@ -512,6 +530,25 @@ async def _prepare(
     Raises:
         Exception: all exceptions raised by :meth:`SessionManager.create` are forwarded as-is.
     """
+
+    if legacy_storage is not None:
+        xep_0060: XEP_0060 = xmpp["xep_0060"]
+
+        await oldmemo.migrations.migrate(
+            legacy_storage,
+            storage,
+            # Taking the safe path here by resetting all trust to at most undecided. This is not optimal, but
+            # the complexity of making this configurable outweighs the expected use.
+            TrustLevel.UNDECIDED.value,
+            TrustLevel.UNDECIDED.value,
+            TrustLevel.DISTRUSTED.value,
+            lambda bare_jid, device_id: cast(Awaitable[oldmemo.oldmemo.BundleImpl], _download_bundle(
+                xep_0060,
+                oldmemo.oldmemo.NAMESPACE,
+                bare_jid,
+                device_id
+            ))
+        )
 
     session_manager = await _make_session_manager(xmpp, xep_0384).create(
         [
@@ -639,6 +676,19 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         """
 
     @property
+    def legacy_storage(self) -> Optional[LegacyStorage]:
+        """
+        This property can be overridden to have the plugin perform migration from a legacy storage backend
+        (python-omemo versions older than v1.0.0) to the new storage backend returned by :meth:`storage`.
+        This migration is fully automatic and idempotent.
+
+        Returns:
+            A legacy storage backend implementation to migrate data from, otherwise `None`.
+        """
+
+        return None
+
+    @property
     @abstractmethod
     def _btbv_enabled(self) -> bool:
         """
@@ -713,7 +763,12 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         # If the session manager is neither available nor currently being built, build it in a way that other
         # tasks can await the build task
         if self.__session_manager_task is None:
-            self.__session_manager_task = asyncio.create_task(_prepare(self.xmpp, self, self.storage))
+            self.__session_manager_task = asyncio.create_task(_prepare(
+                self.xmpp,
+                self,
+                self.storage,
+                self.legacy_storage
+            ))
             session_manager = await self.__session_manager_task
             self.__session_manager = session_manager
             self.__session_manager_task = None
