@@ -47,7 +47,8 @@ classifiers = [
 version = { attr = "slixmpp_omemo.version.__version__" }
 
 [tool.setuptools.packages.find]
-exclude = [ "tests" ]
+include = [ "slixmpp_omemo", "slixmpp_omemo.*" ]
+namespaces = false
 
 [project.optional-dependencies]
 docs = [
