@@ -19,7 +19,7 @@ dependencies = [
     "OMEMO>=2.0.0,<3",
     "Oldmemo[xml]>=2.0.0,<3",
     "Twomemo[xml]>=2.0.0,<3",
-    "typing-extensions>=4.4.0"
+    "typing-extensions>=4.4.0; python_version < '3.11'"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

@@ -1,10 +1,15 @@
 from abc import abstractmethod
 import enum
+import sys
 from typing import FrozenSet, Optional, Set
-from typing_extensions import assert_never
 
 from omemo.session_manager import SessionManager, UnknownTrustLevel
 from omemo.types import DeviceInformation, TrustLevel as CoreTrustLevel
+
+if sys.version_info >= (3, 11):
+    from typing import assert_never
+else:
+    from typing_extensions import assert_never
 
 
 __all__ = [
