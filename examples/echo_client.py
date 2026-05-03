@@ -165,7 +165,7 @@ class OmemoEchoClient(ClientXMPP):
         """
 
         self.send_presence()
-        await self.get_roster()  # type: ignore[no-untyped-call]
+        await self.get_roster()
 
         xep_0045: Optional[XEP_0045] = self["xep_0045"]
         if xep_0045 is not None and self.muc_join_info is not None:
