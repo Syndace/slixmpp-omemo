@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - Import certain typing features directly from typing rather than typing-extensions
 - Only require typing-extensions when it's really needed
+- Send oldmemo and twomemo content in the same stanza
 
 ## [2.1.0] - 29th of January 2026
 

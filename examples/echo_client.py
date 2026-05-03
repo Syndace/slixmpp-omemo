@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, FrozenSet, Literal, NamedTuple, Optional, Set, Union
 
+import oldmemo
 from omemo.storage import Just, Maybe, Nothing, Storage
 from omemo.types import DeviceInformation, JSONType
 
@@ -215,8 +216,8 @@ class OmemoEchoClient(ClientXMPP):
             if JID(real_mfrom_str) == self.boundjid:
                 is_muc_reflection = True
 
-        namespace = xep_0384.is_encrypted(stanza)
-        if namespace is None:
+        namespaces = xep_0384.is_encrypted(stanza)
+        if len(namespaces) == 0:
             if not stanza["body"]:
                 # This is the case for things like read markers, ignore those.
                 return
@@ -233,7 +234,7 @@ class OmemoEchoClient(ClientXMPP):
             )
             return
 
-        log.debug(f"Message in namespace {namespace} received: {stanza}")
+        log.debug(f"Message in namespaces {namespaces} received: {stanza}")
 
         try:
             message, device_information = await xep_0384.decrypt_message(stanza)
@@ -304,15 +305,19 @@ class OmemoEchoClient(ClientXMPP):
                 in xep_0045.get_roster(mto)
             }
 
-        messages, encryption_errors = await xep_0384.encrypt_message(reply, encrypt_for)
+        message, encryption_errors = await xep_0384.encrypt_message(reply, encrypt_for)
 
         if len(encryption_errors) > 0:
             log.info(f"There were non-critical errors during encryption: {encryption_errors}")
 
-        for namespace, message in messages.items():
-            message["eme"]["namespace"] = namespace
-            message["eme"]["name"] = self["xep_0380"].mechanisms[namespace]
-            message.send()
+        if message is None:
+            log.warning(f"Nothing to encrypt in message {reply}")
+            return
+
+        # TODO: This is a temporary workaround, the message could contain both oldmemo and twomemo elements
+        message["eme"]["namespace"] = oldmemo.oldmemo.NAMESPACE
+        message["eme"]["name"] = self["xep_0380"].mechanisms[oldmemo.oldmemo.NAMESPACE]
+        message.send()
 
 
 def main() -> None:

@@ -625,7 +625,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         # Mapping from stanza id to plaintext. Since a new id is generated for each outgoing stanza, the
         # protocol version does not need to be stored in addition.
-        self.__muc_reflection_cache: Dict[str, bytes] = {}
+        self.__muc_reflection_cache: Dict[str, Dict[str, bytes]] = {}
 
     def plugin_init(self) -> None:
         xmpp: BaseXMPP = self.xmpp
@@ -994,7 +994,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
         stanza: Message,
         recipient_jids: Union[JID, Set[JID]],
         identifier: Optional[str] = None
-    ) -> Tuple[Dict[str, Message], FrozenSet[EncryptionError]]:
+    ) -> Tuple[Optional[Message], FrozenSet[EncryptionError]]:
         """
         Encrypt a message stanza. Selects the optimal OMEMO protocol version for each recipient device.
         Twomemo encrypts the whole stanza using SCE, oldmemo encrypts only the body.
@@ -1009,17 +1009,19 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
                 documentation of :meth:`_devices_blindly_trusted` or :meth:`_prompt_manual_trust` for details.
 
         Returns:
-            Encrypted messages ready to be sent and a set of non-critical errors encountered during
-            encryption. The key is the messages dictionary is the OMEMO version namespace, the value is the
-            encrypted message stanza for that OMEMO protocol version. The store hint is enabled on returned
-            stanzas. Note that the ids (if any) of the original stanza are not preserved. This is to avoid
-            duplicate id usage if the input stanza is encrypted multiple times for different protocol
-            versions.
+            The encrypted version of the input message ready to be sent, and a set of non-critical errors
+            encountered during encryption. The message can contain elements for multiple OMEMO versions, in
+            case there is a mix of supported versions between the recipients. The store hint is enabled on the
+            stanza and the message id is copied from the source message. It also contains a fallback body. If
+            there is nothing to be sent, None is returned in place of an encrypted message. This can be the
+            case if the input message does not contain a body and oldmemo is to be used with all recipients.
 
         Warning:
-            Encrypted message stanzas for oldmemo consist of only the bare minimum: the encrypted body and the
-            store hint. Other tags that can't be encrypted by oldmemo are _not_ automatically copied over from
-            the source stanza; this has to be done manually afterwards if desired.
+            Encrypted message stanzas consist only of the bare minimum: the OMEMO element(s) and the store
+            hint. For OMEMO versions that support SCE, other tags such as read markers are included in the
+            encrypted OMEMO element. For older versions that do not use SCE, only the body is encrypted, which
+            means that other elements such as read markers are lost and have to be copied over manually to be
+            sent in plain if desired.
 
         Warning:
             Messages without a body are not considered for oldmemo encryption.
@@ -1057,7 +1059,7 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
 
         # Exit early if there's no plaintext to encrypt
         if len(plaintexts) == 0:
-            return {}, frozenset()
+            return None, frozenset()
 
         session_manager = await self.get_session_manager()
 
@@ -1071,7 +1073,10 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
             identifier=identifier
         )
 
-        encrypted_messages: Dict[str, Message] = {}
+        encrypted_message = copy(stanza)
+        encrypted_message.clear()
+        encrypted_message["body"] = self.fallback_message
+        encrypted_message.enable("store")
 
         for message in messages:
             namespace = message.namespace
@@ -1087,31 +1092,20 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
             if plaintext is None or message_elt is None:
                 raise UnknownNamespace(f"OMEMO version namespace {namespace} unknown")
 
-            stanza_copy = copy(stanza)
-            stanza_copy.clear()
-            stanza_copy["id"] = stream.new_id()
-            stanza_copy.append(message_elt)
-            stanza_copy["body"] = self.fallback_message
-            stanza_copy.enable("store")
+            encrypted_message.append(message_elt)
 
-            encrypted_messages[namespace] = stanza_copy
+        if encrypted_message.get_type() == "groupchat":
+            # In contrast to one to one messages, MUC messages are reflected to the sender. Thus, the sender
+            # usually does not add messages to their local message log when sending them, but when the
+            # reflection is received. This approach does not pair well with OMEMO, since for security reasons
+            # it is forbidden to encrypt messages for the own device. Thus, when the reflection of an OMEMO
+            # message is received, it can't be decrypted and added to the local message log as usual. To
+            # counteract this, the plaintext of outgoing messages sent to MUCs are cached by id, such that
+            # when the reflection is received, the plaintext can be looked up from the cache and returned as
+            # if it had just been decrypted.
+            self.__muc_reflection_cache[encrypted_message["id"]] = plaintexts
 
-            if stanza_copy.get_type() == "groupchat":
-                # In contrast to one to one messages, MUC messages are reflected to the sender. Thus, the
-                # sender usually does not add messages to their local message log when sending them, but when
-                # the reflection is received. This approach does not pair well with OMEMO, since for security
-                # reasons it is forbidden to encrypt messages for the own device. Thus, when the reflection of
-                # an OMEMO message is received, it can't be decrypted and added to the local message log as
-                # usual. To counteract this, the plaintext of outgoing messages sent to MUCs are cached by id,
-                # such that when the reflection is received, the plaintext can be looked up from the cache and
-                # returned as if it had just been decrypted.
-                # TODO: The way reflections are handled currently, MUC messages that are encrypted for
-                # multiple protocol versions will be reflected multiple times. Some logic is required to
-                # filter duplicates, most likely prefering the newest protocol version's reflection and
-                # discarding all others.
-                self.__muc_reflection_cache[stanza_copy["id"]] = plaintext
-
-        return encrypted_messages, encryption_errors
+        return encrypted_message, encryption_errors
 
     async def decrypt_message(self, stanza: Message) -> Tuple[Message, DeviceInformation]:
         """
@@ -1172,14 +1166,12 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
                 f"Stanza contains multiple encrypted elements in the {oldmemo.oldmemo.NAMESPACE} namespace"
             )
 
-        if len(twomemo_encrypted_elt) + len(oldmemo_encrypted_elt) > 1:
-            raise ValueError("Stanza contains a mix of encrypted elements in different OMEMO namespaces")
-
         if len(twomemo_encrypted_elt) == 1:
             encrypted_elt = twomemo_encrypted_elt[0]
             message = twomemo.etree.parse_message(encrypted_elt, sender_bare_jid)
 
-        if len(oldmemo_encrypted_elt) == 1:
+        # twomemo takes precedence if both versions are included a message
+        elif len(oldmemo_encrypted_elt) == 1:
             encrypted_elt = oldmemo_encrypted_elt[0]
             message = await oldmemo.etree.parse_message(
                 encrypted_elt,
@@ -1205,42 +1197,52 @@ class XEP_0384(BasePlugin, metaclass=ABCMeta):  # pylint: disable=invalid-name
             if cached_plaintext is None:
                 raise
 
-            plaintext = cached_plaintext
+            plaintext = cached_plaintext.get(message.namespace, None)
 
             # It's a reflected MUC message, thus the sending device is us.
             device_information = (await session_manager.get_own_device_information())[0]
+
+        decrypted_stanza = copy(stanza)
+
+        # Remove the fallback body
+        del decrypted_stanza["body"]
+
+        # Remove the OMEMO elements
+        for elt in decrypted_stanza.xml.findall(f"{{{twomemo.twomemo.NAMESPACE}}}encrypted"):
+            decrypted_stanza.xml.remove(elt)
+        for elt in decrypted_stanza.xml.findall(f"{{{oldmemo.oldmemo.NAMESPACE}}}encrypted"):
+            decrypted_stanza.xml.remove(elt)
 
         if message.namespace == twomemo.twomemo.NAMESPACE:
             # Do SCE unpacking here
             raise NotImplementedError(f"SCE not supported yet. Plaintext: {plaintext!r}")
 
         if message.namespace == oldmemo.oldmemo.NAMESPACE:
-            stanza = copy(stanza)
-
             # Remove all body elements from the original element, since those act as fallbacks in case the
             # encryption protocol is not supported
-            del stanza["body"]
 
             if plaintext is not None:
                 # Add the decrypted body
-                stanza["body"] = plaintext.decode("utf-8")
+                decrypted_stanza["body"] = plaintext.decode("utf-8")
 
-        return stanza, device_information
+        return decrypted_stanza, device_information
 
-    def is_encrypted(self, stanza: Message) -> Optional[str]:
+    def is_encrypted(self, stanza: Message) -> Set[str]:
         """
         Args:
             stanza: The stanza.
 
         Returns:
-            The namespace of the OMEMO version this message is encrypted with, or `None` if the stanza is not
-            encrypted with any supported version of OMEMO.
+            The namespaces of the OMEMO versions this message is encrypted with. Empty if this message is not
+            encrypted with any of the supported OMEMO versions.
         """
 
+        result: Set[str] = set()
+
         if stanza.xml.find(f"{{{twomemo.twomemo.NAMESPACE}}}encrypted") is not None:
-            return twomemo.twomemo.NAMESPACE
+            result.add(twomemo.twomemo.NAMESPACE)
 
         if stanza.xml.find(f"{{{oldmemo.oldmemo.NAMESPACE}}}encrypted") is not None:
-            return oldmemo.oldmemo.NAMESPACE
+            result.add(oldmemo.oldmemo.NAMESPACE)
 
-        return None
+        return result
