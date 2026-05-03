@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [2.2.0] - 3rd of May 2026
+
 ### Changed
 - Import certain typing features directly from typing rather than typing-extensions
 - Only require typing-extensions when it's really needed
@@ -72,7 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/Syndace/slixmpp-omemo/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/Syndace/slixmpp-omemo/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Syndace/slixmpp-omemo/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/Syndace/slixmpp-omemo/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/Syndace/slixmpp-omemo/compare/v1.2.2...v2.0.0
 [1.2.2]: https://github.com/Syndace/slixmpp-omemo/compare/v1.2.1...v1.2.2
