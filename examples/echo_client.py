@@ -5,7 +5,8 @@ import json
 import logging
 from pathlib import Path
 import sys
-from typing import Any, Dict, FrozenSet, Literal, NamedTuple, Optional, Set, Union
+from typing import Any, Dict, FrozenSet, Literal, NamedTuple, Optional, Set
+import weakref
 
 import oldmemo
 from omemo.storage import Just, Maybe, Nothing, Storage
@@ -14,7 +15,7 @@ from omemo.types import DeviceInformation, JSONType
 from slixmpp.clientxmpp import ClientXMPP
 from slixmpp.jid import JID  # pylint: disable=no-name-in-module
 from slixmpp.plugins import register_plugin  # type: ignore[attr-defined]
-from slixmpp.plugins.xep_0045 import XEP_0045  # type: ignore[attr-defined]
+from slixmpp.plugins.xep_0045 import XEP_0045
 from slixmpp.stanza import Message
 from slixmpp.xmlstream.handler import CoroutineCallback
 from slixmpp.xmlstream.matcher import MatchXPath
@@ -148,6 +149,20 @@ class OmemoEchoClient(ClientXMPP):
 
         self.muc_join_info = muc_join_info
 
+        # It is necessary to keep track of some "metadata" for certain stanzas. For example, the code needs to
+        # know whether an incoming stanza was originally encrypted or not. Weak references are a neat tool to
+        # keep track of that metadata without having to worry about stanza lifetimes or garbage collection.
+        # Unfortunately StanzaBase is unhashable, so we have to use the ids of the stanza objects as keys and
+        # handle the cleanup ourselves.
+
+        # Stanzas that should be sent in plain are added to this set, such that they can be skipped in
+        # `outgoing_stanza_handler`.
+        self.outgoing_plain_stanzas: Set[int] = set()
+
+        # Stanzas that have been decrypted are added to this dictionary including the device information of
+        # the sending device, before being injected again as an incoming stanza.
+        self.incoming_decrypted_stanzas: Dict[int, DeviceInformation] = {}
+
         self.add_event_handler("session_start", self.start)
         self.register_handler(CoroutineCallback(
             "Messages",
@@ -185,8 +200,6 @@ class OmemoEchoClient(ClientXMPP):
                 to see how it may be used.
         """
 
-        # TODO: Rewrite to use decrypt->inject approach
-
         xep_0045: Optional[XEP_0045] = self["xep_0045"]
         xep_0384: XEP_0384 = self["xep_0384"]
 
@@ -220,22 +233,33 @@ class OmemoEchoClient(ClientXMPP):
             if JID(real_mfrom_str) == self.boundjid:
                 is_muc_reflection = True
 
+        decrypted_stanza_device_info = self.incoming_decrypted_stanzas.get(id(stanza), None)
+
         namespaces = xep_0384.is_encrypted(stanza)
         if len(namespaces) == 0:
             if not stanza["body"]:
                 # This is the case for things like read markers, ignore those.
                 return
 
-            # Don't respond to reflected MUC messages
             if is_muc_reflection:
-                log.debug(f"Ignoring reflected unencrypted MUC message: {stanza['body']}")
-                return
+                if decrypted_stanza_device_info is None:
+                    # Don't respond to reflected unencrypted MUC messages.
+                    log.debug(f"Ignoring reflected unencrypted MUC message: {stanza['body']}")
+                else:
+                    # Don't respond to reflected encrypted MUC messages either. Cool to see though if message
+                    # reflection in encrypted MUCs works correctly, so logged as INFO.
+                    log.info(f"Ignoring reflected encrypted MUC message: {stanza['body']}")
+                    return
 
-            self.plain_reply(
-                mfrom,
-                mtype,
-                f"Unencrypted message or unsupported message encryption: {stanza['body']}"
-            )
+            if decrypted_stanza_device_info is None:
+                self.plain_reply(
+                    mfrom,
+                    mtype,
+                    f"Unencrypted message or unsupported message encryption: {stanza['body']}"
+                )
+            else:
+                log.debug(f"Information about sender: {decrypted_stanza_device_info}")
+                self.encrypted_reply(mfrom, stanza)
             return
 
         log.debug(f"Message in namespaces {namespaces} received: {stanza}")
@@ -243,19 +267,11 @@ class OmemoEchoClient(ClientXMPP):
         try:
             message, device_information = await xep_0384.decrypt_message(stanza)
 
-            log.debug(f"Information about sender: {device_information}")
+            message_id = id(message)
+            self.incoming_decrypted_stanzas[message_id] = device_information
+            weakref.ref(message, lambda _: self.incoming_decrypted_stanzas.pop(message_id, None))
 
-            if not message["body"]:
-                # This is the case for things like read markers, ignore those.
-                return
-
-            # Don't respond to reflected MUC messages. Cool to see though if message reflection in encrypted
-            # MUCs works correctly
-            if is_muc_reflection:
-                log.info(f"Ignoring reflected encrypted MUC message: {message['body']}")
-                return
-
-            await self.encrypted_reply(mfrom, message)
+            self.recv_stanza(message)
         except Exception as e:  # pylint: disable=broad-exception-caught
             log.warning("Exception while handling encrypted message", exc_info=True)
             self.plain_reply(mfrom, mtype, f"Error {type(e).__name__}: {str(e)}")
@@ -272,10 +288,15 @@ class OmemoEchoClient(ClientXMPP):
 
         stanza = self.make_message(mto=mto, mtype=mtype)
         stanza["body"] = reply
-        # TODO: Mark the message as plain and look for that mark in outgoing_stanza_handler
+
+        # Mark the stanza as plain
+        stanza_id = id(stanza)
+        self.outgoing_plain_stanzas.add(stanza_id)
+        weakref.ref(stanza, lambda _: self.outgoing_plain_stanzas.discard(stanza_id))
+
         stanza.send()
 
-    async def encrypted_reply(self, mto: JID, reply: Message) -> None:
+    def encrypted_reply(self, mto: JID, reply: Message) -> None:
         """
         Helper to reply with encrypted messages.
 
@@ -294,6 +315,17 @@ class OmemoEchoClient(ClientXMPP):
 
     async def outgoing_stanza_handler(self, stanza: StanzaBase) -> Optional[StanzaBase]:
         """
+        This handler is called by the 'out_sce' filter, which was added specifically for encryption purposes.
+        It is called for all stanzas right before sending them out, after all other processing has been
+        performed. This guarantees that nothing is added to the stanzas after they are encrypted, avoiding
+        accidental plaintext leaks.
+
+        Args:
+            stanza: A stanza that's about to be sent out.
+
+        Returns:
+            The stanza to send (can be the input stanza if it's not supposed to be modified), or `None` if
+            this stanza is to be discarded and not sent out.
         """
 
         # Don't touch anything but message stanzas, even though other stanza types, especially IQs, can be
@@ -307,9 +339,10 @@ class OmemoEchoClient(ClientXMPP):
         if mtype not in { "chat", "normal", "groupchat" }:
             return stanza
 
-        encrypt = None  # TODO
+        # Check whether encryption should be skipped for this stanza
+        skip_encryption = id(stanza) in self.outgoing_plain_stanzas
 
-        if encrypt:
+        if not skip_encryption:
             xep_0384: XEP_0384 = self["xep_0384"]
 
             mto = stanza.get_to()
@@ -335,7 +368,8 @@ class OmemoEchoClient(ClientXMPP):
 
             stanza = message
 
-            # TODO: This is a temporary workaround, the message could contain both oldmemo and twomemo elements
+            # TODO: This is a temporary workaround, the message could contain both oldmemo and twomemo
+            # elements
             stanza["eme"]["namespace"] = oldmemo.oldmemo.NAMESPACE
             stanza["eme"]["name"] = self["xep_0380"].mechanisms[oldmemo.oldmemo.NAMESPACE]
 
