@@ -34,9 +34,9 @@ from slixmpp.basexmpp import BaseXMPP
 from slixmpp.exceptions import IqError
 from slixmpp.jid import JID  # pylint: disable=no-name-in-module
 from slixmpp.plugins.base import BasePlugin
-from slixmpp.plugins.xep_0004 import Form  # type: ignore[attr-defined]
-from slixmpp.plugins.xep_0045 import XEP_0045  # type: ignore[attr-defined]
-from slixmpp.plugins.xep_0060 import XEP_0060  # type: ignore[attr-defined]
+from slixmpp.plugins.xep_0004 import Form
+from slixmpp.plugins.xep_0045 import XEP_0045
+from slixmpp.plugins.xep_0060 import XEP_0060
 from slixmpp.plugins.xep_0163 import XEP_0163
 from slixmpp.roster import RosterNode  # type: ignore[attr-defined]
 from slixmpp.stanza import Iq, Message, Presence
