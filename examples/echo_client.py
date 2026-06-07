@@ -18,6 +18,7 @@ from slixmpp.plugins.xep_0045 import XEP_0045  # type: ignore[attr-defined]
 from slixmpp.stanza import Message
 from slixmpp.xmlstream.handler import CoroutineCallback
 from slixmpp.xmlstream.matcher import MatchXPath
+from slixmpp.xmlstream.stanzabase import StanzaBase
 
 from slixmpp_omemo import TrustLevel, XEP_0384
 
@@ -151,8 +152,9 @@ class OmemoEchoClient(ClientXMPP):
         self.register_handler(CoroutineCallback(
             "Messages",
             MatchXPath(f"{{{self.default_ns}}}message"),
-            self.message_handler  # type: ignore[arg-type]
+            self.incoming_message_handler  # type: ignore[arg-type]
         ))
+        self.add_filter("out_sce", self.outgoing_stanza_handler)
 
     async def start(self, _event: Any) -> None:
         """
@@ -173,7 +175,7 @@ class OmemoEchoClient(ClientXMPP):
             # Started as a task as a workaround for https://codeberg.org/poezio/slixmpp/issues/3660
             asyncio.create_task(xep_0045.join_muc_wait(self.muc_join_info.room_jid, self.muc_join_info.nick))
 
-    async def message_handler(self, stanza: Message) -> None:
+    async def incoming_message_handler(self, stanza: Message) -> None:
         """
         Process incoming message stanzas. Be aware that this also includes MUC messages and error messages. It
         is usually a good idea to check the messages's type before processing or sending replies.
@@ -182,6 +184,8 @@ class OmemoEchoClient(ClientXMPP):
             msg: The received message stanza. See the documentation for stanza objects and the Message stanza
                 to see how it may be used.
         """
+
+        # TODO: Rewrite to use decrypt->inject approach
 
         xep_0045: Optional[XEP_0045] = self["xep_0045"]
         xep_0384: XEP_0384 = self["xep_0384"]
@@ -251,7 +255,7 @@ class OmemoEchoClient(ClientXMPP):
                 log.info(f"Ignoring reflected encrypted MUC message: {message['body']}")
                 return
 
-            await self.encrypted_reply(mfrom, mtype, message)
+            await self.encrypted_reply(mfrom, message)
         except Exception as e:  # pylint: disable=broad-exception-caught
             log.warning("Exception while handling encrypted message", exc_info=True)
             self.plain_reply(mfrom, mtype, f"Error {type(e).__name__}: {str(e)}")
@@ -268,56 +272,74 @@ class OmemoEchoClient(ClientXMPP):
 
         stanza = self.make_message(mto=mto, mtype=mtype)
         stanza["body"] = reply
+        # TODO: Mark the message as plain and look for that mark in outgoing_stanza_handler
         stanza.send()
 
-    async def encrypted_reply(
-        self,
-        mto: JID,
-        mtype: Literal["chat", "normal", "groupchat"],
-        reply: Union[Message, str]
-    ) -> None:
+    async def encrypted_reply(self, mto: JID, reply: Message) -> None:
         """
         Helper to reply with encrypted messages.
 
         Args:
             mto: The recipient JID.
-            mtype: The message type.
-            reply: Either the message stanza to encrypt and reply with, or the text content of the reply.
+            reply: The message stanza to encrypt and reply with.
         """
 
-        xep_0384: XEP_0384 = self["xep_0384"]
-
-        if isinstance(reply, str):
-            reply_body = reply
-            reply = self.make_message(mto=mto, mtype=mtype)
-            reply["body"] = reply_body
+        # The encryption itself happens in outgoing_stanza_handler, which is registered as an out_sce filter
+        # and is thus guaranteed to run after all other potential modification of the stanza have been
+        # performed, just before it's sent out.
 
         reply.set_to(mto)
         reply.set_from(self.boundjid)
+        reply.send()
 
-        encrypt_for: Set[JID] = { mto }
-        if mtype == "groupchat":
-            # In a MUC, encrypt for all participants
-            xep_0045: XEP_0045 = self["xep_0045"]
-            encrypt_for = {
-                JID(xep_0045.get_jid_property(mto, nick, "jid"))
-                for nick
-                in xep_0045.get_roster(mto)
-            }
+    async def outgoing_stanza_handler(self, stanza: StanzaBase) -> Optional[StanzaBase]:
+        """
+        """
 
-        message, encryption_errors = await xep_0384.encrypt_message(reply, encrypt_for)
+        # Don't touch anything but message stanzas, even though other stanza types, especially IQs, can be
+        # encrypted with SCE-based encryption schemes
+        if not isinstance(stanza, Message):
+            return stanza
 
-        if len(encryption_errors) > 0:
-            log.info(f"There were non-critical errors during encryption: {encryption_errors}")
+        # Only encrypt message types that are expected to contain body text for this example. With SCE-based
+        # encryption schemes, any message stanza can be encrypted.
+        mtype = stanza["type"]
+        if mtype not in { "chat", "normal", "groupchat" }:
+            return stanza
 
-        if message is None:
-            log.warning(f"Nothing to encrypt in message {reply}")
-            return
+        encrypt = None  # TODO
 
-        # TODO: This is a temporary workaround, the message could contain both oldmemo and twomemo elements
-        message["eme"]["namespace"] = oldmemo.oldmemo.NAMESPACE
-        message["eme"]["name"] = self["xep_0380"].mechanisms[oldmemo.oldmemo.NAMESPACE]
-        message.send()
+        if encrypt:
+            xep_0384: XEP_0384 = self["xep_0384"]
+
+            mto = stanza.get_to()
+
+            encrypt_for: Set[JID] = { mto }
+            if mtype == "groupchat":
+                # In a MUC, encrypt for all participants
+                xep_0045: XEP_0045 = self["xep_0045"]
+                encrypt_for = {
+                    JID(xep_0045.get_jid_property(mto, nick, "jid"))
+                    for nick
+                    in xep_0045.get_roster(mto)
+                }
+
+            message, encryption_errors = await xep_0384.encrypt_message(stanza, encrypt_for)
+
+            if len(encryption_errors) > 0:
+                log.info(f"There were non-critical errors during encryption: {encryption_errors}")
+
+            if message is None:
+                log.warning(f"Nothing to encrypt in message {stanza}")
+                return stanza
+
+            stanza = message
+
+            # TODO: This is a temporary workaround, the message could contain both oldmemo and twomemo elements
+            stanza["eme"]["namespace"] = oldmemo.oldmemo.NAMESPACE
+            stanza["eme"]["name"] = self["xep_0380"].mechanisms[oldmemo.oldmemo.NAMESPACE]
+
+        return stanza
 
 
 def main() -> None:
